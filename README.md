@@ -2908,3 +2908,221 @@ npm run cypress:run --spec "cypress/e2e/appointment-booking.cy.ts"
 ```
 
 ---
+
+---
+
+## 🚀 Deployment
+
+### Production Deployment
+
+**1. Prepare Environment:**
+```bash
+# Create deployment directory
+mkdir -p /opt/dentalflow
+cd /opt/dentalflow
+
+# Clone repository
+git clone https://github.com/yourorg/dentalflow.git .
+```
+
+**2. Configure Environment Variables:**
+```bash
+# Create .env file
+cat > .env << EOF
+# Database
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=dentalflow
+DB_USER=dentalflow_user
+DB_PASSWORD=your_secure_password_here
+
+# JWT
+JWT_SECRET=your_256_bit_jwt_secret_key_here
+
+# Twilio WhatsApp
+TWILIO_ACCOUNT_SID=your_account_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_WHATSAPP_NUMBER=+14155238886
+
+# Application
+APP_BASE_URL=https://dentalflow.com
+SPRING_PROFILES_ACTIVE=production
+EOF
+
+chmod 600 .env
+```
+
+**3. Build Application:**
+```bash
+# Backend
+cd backend
+mvn clean package -DskipTests
+cp target/dentalflow-api-1.0.0.jar /opt/dentalflow/
+
+# Frontend
+cd ../frontend
+npm install
+npm run build:prod
+cp -r dist/dentalflow /var/www/dentalflow
+```
+
+**4. Configure Systemd Service:**
+```bash
+sudo cat > /etc/systemd/system/dentalflow.service << EOF
+[Unit]
+Description=DentalFlow API
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=dentalflow
+WorkingDirectory=/opt/dentalflow
+EnvironmentFile=/opt/dentalflow/.env
+ExecStart=/usr/bin/java -jar /opt/dentalflow/dentalflow-api-1.0.0.jar
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Start service
+sudo systemctl daemon-reload
+sudo systemctl enable dentalflow
+sudo systemctl start dentalflow
+```
+
+**5. Configure Nginx:**
+```nginx
+# /etc/nginx/sites-available/dentalflow
+server {
+    listen 80;
+    server_name dentalflow.com www.dentalflow.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name dentalflow.com www.dentalflow.com;
+
+    ssl_certificate /etc/letsencrypt/live/dentalflow.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dentalflow.com/privkey.pem;
+
+    # Frontend
+    location / {
+        root /var/www/dentalflow;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API Backend
+    location /api/ {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+**6. Obtain SSL Certificate:**
+```bash
+sudo certbot --nginx -d dentalflow.com -d www.dentalflow.com
+```
+
+**7. Verify Deployment:**
+```bash
+# Check service status
+sudo systemctl status dentalflow
+
+# Check application logs
+sudo journalctl -u dentalflow -f
+
+# Verify API is running
+curl https://dentalflow.com/api/actuator/health
+
+# Check Nginx configuration
+sudo nginx -t
+
+# Reload Nginx
+sudo systemctl reload nginx
+```
+
+**8. Database Backup Configuration:**
+```bash
+# Create backup script
+sudo cat > /opt/dentalflow/backup.sh << 'EOF'
+#!/bin/bash
+BACKUP_DIR="/opt/dentalflow/backups"
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="$BACKUP_DIR/dentalflow_$DATE.sql"
+
+mkdir -p $BACKUP_DIR
+
+# Create backup
+pg_dump -U dentalflow_user dentalflow > $BACKUP_FILE
+
+# Compress backup
+gzip $BACKUP_FILE
+
+# Delete backups older than 30 days
+find $BACKUP_DIR -name "*.gz" -mtime +30 -delete
+
+echo "Backup completed: ${BACKUP_FILE}.gz"
+EOF
+
+chmod +x /opt/dentalflow/backup.sh
+
+# Schedule daily backup at 2 AM
+(crontab -l 2>/dev/null; echo "0 2 * * * /opt/dentalflow/backup.sh") | crontab -
+```
+
+**9. Monitoring Setup:**
+```bash
+# Install monitoring tools
+sudo apt-get install -y prometheus-node-exporter
+
+# Configure log rotation
+sudo cat > /etc/logrotate.d/dentalflow << EOF
+/opt/dentalflow/logs/*.log {
+    daily
+    missingok
+    rotate 30
+    compress
+    delaycompress
+    notifempty
+    create 0640 dentalflow dentalflow
+    sharedscripts
+    postrotate
+        systemctl reload dentalflow > /dev/null
+    endscript
+}
+EOF
+```
+
+**10. Security Hardening:**
+```bash
+# Configure firewall
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow 22/tcp
+sudo ufw enable
+
+# Disable root login
+sudo sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+sudo systemctl restart sshd
+
+# Install fail2ban
+sudo apt-get install -y fail2ban
+sudo systemctl enable fail2ban
+sudo systemctl start fail2ban
+```
+
+---
+
+## 📝 License
+
+This project was developed as part of research and training activities at SENA (National Learning Service) to support dental school graduates. The code, applications, documentation, and repositories are property of SENA and have been recreated for portfolio demonstration purposes.
+
+---
+
